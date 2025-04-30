@@ -2,8 +2,9 @@
 /protein_sequences
 /logs
 /tmp
-
-
+/.snakemake
+/scratch1/chris/introner-genotyping-pipeline/.snakemake/metadata
+/temp*
 # Common bioinformatics file formats
 *.bam
 *.sam

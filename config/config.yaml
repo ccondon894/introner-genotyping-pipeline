@@ -1,0 +1,5 @@
+reference_genome: "/scratch1/chris/introner-genotyping-pipeline/graph-assemblies/RCC693.vg_paths.fa"
+query_genome: "/scratch1/chris/introner-genotyping-pipeline/graph-assemblies/RCC647.vg_paths.fa"
+expected_divergence: "5"  # Use 5, 10, or 20 based on expected divergence
+output_dir: "RCC693_to_RCC647_results"
+threads: 8  # Adjust based on your system

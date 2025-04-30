@@ -112,9 +112,9 @@ rule all:
 # First rule to create FASTA files and directory structure
 checkpoint make_dxy_fastas:
     input:
-        metadata = os.path.join(GT_DIR, "genotype_matrix.metadata.3.updated.tsv"),
+        metadata = os.path.join(GT_DIR, "genotype_matrix.metadata.4.updated.tsv"),
         fasta_dir = SEQ_DIR,
-        calls = os.path.join(GT_DIR, "genotype_matrix.calls.3.updated.tsv")
+        calls = os.path.join(GT_DIR, "genotype_matrix.calls.4.updated.tsv")
     output:
         data_dir = directory(os.path.join(ALIGNMENT_DIR, "data")),  # Changed output to a subdirectory
         flag = os.path.join(ALIGNMENT_DIR, "setup_complete.flag")   # Added a flag file as output

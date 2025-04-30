@@ -4,6 +4,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 tsv = sys.argv[1]
+png = sys.argv[2]
 
 # Read the data
 df = pd.read_csv(tsv, sep='\t', header=0)
@@ -35,7 +36,7 @@ ax2.set_title('Distribution of Pi Values')
 
 # Adjust layout and save
 plt.tight_layout()
-plt.savefig('pi_visualization.png')
+plt.savefig(png)
 
 # Print summary statistics
 print("\nSummary Statistics:")

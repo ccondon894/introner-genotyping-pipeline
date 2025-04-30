@@ -58,7 +58,7 @@ for idx, row in df.iterrows():
 # We can simply ignore or remove the 0-count bin for reporting
 
 # Exclude the first bin (index 0) for reporting:
-afs1_no_zero = afs1[1:]  # This slices out the first element
+afs1_no_zero = afs1[1:-1]  # This slices out the first element
 afs2_no_zero = afs2[1:]
 
 # print("1D AFS for Group 1 (ignoring loci with 0 present calls):")
@@ -79,33 +79,31 @@ print(afs2_no_zero)
 log10_afs_2d = np.log10(afs_2d + 1)
 log10_afs_2d = log10_afs_2d.T
 
-plt.figure(figsize=(15, 10))
+plt.figure(figsize=(20, 5))
 
-g = sns.heatmap(log10_afs_2d, fmt=".1f", annot=True, cmap="viridis", cbar_kws={'label': 'log10 Introner Count', "shrink": 1.0}, square=True, linewidths=0.5, linecolor='white')
+sns.heatmap(log10_afs_2d, fmt=".1f", annot=True, cmap="viridis", cbar_kws={'label': 'log10 Introner Count', "shrink": 1.0}, square=True, linewidths=0.5, linecolor='white')
 plt.ylabel('Allele Count in Group 2 (size 2)')
 plt.xlabel('Allele Count in Group 1 (size 14)')
 plt.gca().invert_yaxis()
-pos = g.get_position()
-cbar = g.collections[0].colorbar
-cbar_pos = cbar.ax.get_position()
-cbar.ax.set_position([cbar_pos.x0, pos.y0, cbar_pos.width, pos.height])
 plt.tight_layout()
 plt.savefig(figure_afs_2d)
 
 plt.figure(figsize=(15,10))
-plt.bar(range(1, len(afs1_no_zero) + 1), afs1_no_zero, color='skyblue')
-xticks = range(0, len(afs1_no_zero) + 1)
-plt.xticks(ticks=np.arange(len(xticks)), labels=xticks)
-plt.ylabel('Frequency')
-plt.xlabel('Allele Count Group 1')
+plt.bar(range(1, len(afs1_no_zero)+1), afs1_no_zero, color='skyblue')
+xticks = range(0, len(afs1_no_zero)+1)
+plt.xticks(ticks=np.arange(len(xticks)), labels=xticks, fontsize=14)
+plt.yticks(fontsize=14)
+plt.ylabel('Frequency', fontsize=14)
+plt.xlabel('Allele Count Group 1', fontsize=14)
 plt.tight_layout()
 plt.savefig(figure_afs_1)
 
 plt.figure(figsize=(5,10))
 plt.bar(range(1, len(afs2_no_zero) + 1), afs2_no_zero, color='skyblue')
 xticks = range(0, len(afs2_no_zero) + 1)
-plt.xticks(ticks=np.arange(len(xticks)), labels=xticks)
-plt.ylabel('Frequency')
-plt.xlabel('Allele Count Group 2')
+plt.xticks(ticks=np.arange(len(xticks)), labels=xticks, fontsize=14)
+plt.yticks(fontsize=14)
+plt.ylabel('Frequency',fontsize=14)
+plt.xlabel('Allele Count Group 2', fontsize=14)
 plt.tight_layout()
 plt.savefig(figure_afs_2)

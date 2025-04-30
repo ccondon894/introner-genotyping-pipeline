@@ -3,7 +3,7 @@ OUTPUT_DIR = "/scratch1/chris/introner-genotyping-pipeline/flanking_pi_output"
 ALIGNMENT_DIR = "/scratch1/chris/introner-genotyping-pipeline/mafft_flank_alignments"
 GT_DIR = "/scratch1/chris/introner-genotyping-pipeline/genotype_matrixes"
 ASSEMBLY_DIR = "/scratch1/chris/introner-genotyping-pipeline/graph-assemblies"
-BAM_DIR = "/storage1/chris/introner-genotyping"
+BAM_DIR = "/storage1/chris/introner-genotyping-bams"
 
 all_samples = ["CCMP1545", "CCMP490", "RCC114", "RCC1614", "RCC1698", "RCC1749", "RCC2482", "RCC3052", "RCC373", "RCC465", "RCC629", "RCC647", "RCC692", "RCC693", "RCC833", "RCC835"]
 samples = ["CCMP490", "RCC114", "RCC1614", "RCC1698", "RCC1749", "RCC2482", "RCC3052", "RCC373", "RCC465", "RCC629", "RCC647", "RCC692", "RCC693", "RCC833", "RCC835"]
@@ -47,7 +47,7 @@ rule all:
 
 rule make_bed_files:
     input:
-        matrix = os.path.join(GT_DIR, "genotype_matrix.metadata.3.updated.tsv")
+        matrix = os.path.join(GT_DIR, "genotype_matrix.metadata.4.updated.tsv")
     output:
         left_bed = os.path.join(OUTPUT_DIR, "{asample}.loci.left_flank.bed"),
         right_bed = os.path.join(OUTPUT_DIR, "{asample}.loci.right_flank.bed")
@@ -58,7 +58,7 @@ rule make_bed_files:
 
 rule mpileup:
     input:
-        bam = os.path.join(BAM_DIR, "{sample}.surject_to.{sample}.paired.filtered.bam"),
+        bam = os.path.join(BAM_DIR, "{sample}.sorted.bam"),
         bed = os.path.join(OUTPUT_DIR, "{sample}.loci.{side}_flank.bed"),
         fa = os.path.join(ASSEMBLY_DIR, "{sample}.vg_paths.fa")
     output:
@@ -133,9 +133,9 @@ rule build_ref_consensus:
 checkpoint make_ortholog_fastas:
    input:
        fastas = expand(os.path.join(OUTPUT_DIR, "{asample}.loci.{side}_flank.consensus.fa"), asample=all_samples, side=sides),
-       metadata = os.path.join(GT_DIR, "genotype_matrix.metadata.3.updated.tsv"),
+       metadata = os.path.join(GT_DIR, "genotype_matrix.metadata.4.updated.tsv"),
        fasta_dir = OUTPUT_DIR,
-       calls = os.path.join(GT_DIR, "genotype_matrix.calls.3.updated.tsv")
+       calls = os.path.join(GT_DIR, "genotype_matrix.calls.4.updated.tsv")
    params:
        fasta_dir = ALIGNMENT_DIR
    output:

@@ -3,13 +3,15 @@ import os
 GENOME_DIR = "/scratch1/chris/introner-genotyping-pipeline/graph-assemblies/"
 SEQUENCES = "/scratch1/chris/introner-genotyping-pipeline/introner_seq_truth_set/introner_truth_set.fa"
 OUTPUT_DIR =  "/scratch1/chris/introner-genotyping-pipeline/graph_blast_results"
-FINAL_SAMPLES = ["CCMP1545", "CCMP490", "RCC114", "RCC1614", "RCC1698", "RCC1749", "RCC2482", "RCC3052", "RCC373", "RCC465", "RCC629", "RCC647", "RCC692", "RCC693", "RCC833", "RCC835"]
+FINAL_SAMPLES = ["CCMP1545", "RCC114", "RCC1614", "RCC1698", "RCC1749", "RCC2482", "RCC3052", "RCC373", "RCC465", "RCC629", "RCC692", "RCC693", "RCC833"]
+GTF_DIR = "/scratch1/chris/introner-genotyping-pipeline/gene_annotations/"
+REF_DIR = "/scratch1/chris/introner-genotyping-pipeline/introner_files_for_Github/"
 
 rule all:
     input:
         # expand("graph_blast_results/{genome_basename}_filtered_blast_results.unique.bed", genome_basename=SAMPLES),
-        expand(os.path.join(OUTPUT_DIR, "{genome_basename}.candidate_loci_plus_flanks.filtered.fa"), genome_basename=FINAL_SAMPLES),
-        expand(os.path.join(OUTPUT_DIR, "{genome_basename}.candidate_loci_plus_flanks.filtered.bed"), genome_basename=FINAL_SAMPLES)
+        expand(os.path.join(OUTPUT_DIR, "{genome_basename}.candidate_loci_plus_flanks.filtered.similarity_checked.fa"), genome_basename=FINAL_SAMPLES),
+        expand(os.path.join(OUTPUT_DIR, "{genome_basename}.candidate_loci_plus_flanks.filtered.similarity_checked.bed"), genome_basename=FINAL_SAMPLES)
 
 # Rule to create a BLAST database for each genome
 rule makeblastdb:
@@ -100,27 +102,51 @@ rule filter_repetitive_sequences:
     output:
         fa = os.path.join(OUTPUT_DIR, "{genome_basename}.candidate_loci_plus_flanks.filtered.fa")
     log: 
-        os.path.join(OUTPUT_DIR, "{genome_basename}.removed_candidate_loci.log")
+        os.path.join(OUTPUT_DIR, "logs", "{genome_basename}.removed_candidate_loci.log")
     shell:
         """
         python scripts/remove_low_complexity_sequences.py --input {input.fa} --output {output.fa} --log {log} --kmers 25
         """
 
+rule check_sequence_similarity_to_reference:
+    input:
+        fa = os.path.join(OUTPUT_DIR, "{genome_basename}.candidate_loci_plus_flanks.filtered.fa"),
+        gtf = os.path.join(GTF_DIR, "{genome_basename}.vg_paths.gtf"),
+        ref_dir = REF_DIR,
+
+    output:
+        fa = os.path.join(OUTPUT_DIR, "{genome_basename}.candidate_loci_plus_flanks.filtered.similarity_checked.fa"),
+        log1 = os.path.join(OUTPUT_DIR, "logs", "{genome_basename}.introner_similarity_check.log"),
+        log2 = os.path.join(OUTPUT_DIR, "logs", "{genome_basename}.introner_similarity_check_summary.log")
+    shell:
+        """
+        python scripts/validate_introners.py \
+            --input_fasta {input.fa} \
+            --gtf {input.gtf} \
+            --ref_dir {input.ref_dir} \
+            --output_fasta {output.fa} \
+            --output_log {output.log1} \
+            --similarity_cutoff 0.7
+        """
+
+
 rule make_filtered_bed:
     input:
-        fa = os.path.join(OUTPUT_DIR, "{genome_basename}.candidate_loci_plus_flanks.filtered.fa")
+        fa = os.path.join(OUTPUT_DIR, "{genome_basename}.candidate_loci_plus_flanks.filtered.similarity_checked.fa")
     output:
-        bed = os.path.join(OUTPUT_DIR, "{genome_basename}.candidate_loci_plus_flanks.filtered.bed")
+        bed = os.path.join(OUTPUT_DIR, "{genome_basename}.candidate_loci_plus_flanks.filtered.similarity_checked.bed")
     run:
         with open(input.fa, 'r') as f, open(output.bed, 'w') as o:
             for line in f:
                 if line.startswith(">"):
-                    line = line[1:].strip()
-                    chrom, other = line.split(":")
-                    coords, seq_id = other.split("|")
-                    start, end = coords.split("-")
-                    o.write(f"{chrom}\t{start}\t{end}\t{seq_id}")
-
-    
-
+                    try:
+                        line = line[1:].strip()
+                        region, metadata = line.split(" ")[0], line.split(" ")[1:]
+                        region, identifier = region.split("|")
+                        chrom, coords = region.split(":")
+                        start, end = coords.split("-")
+                        metadata = "\t".join(metadata)
+                        o.write(f"{chrom}\t{start}\t{end}\t{identifier}\t{metadata}\n")
+                    except ValueError as e:
+                        raise ValueError(f"Error processing line: {line}. Metadata: {metadata}. Original error: {e}")
 

@@ -5,6 +5,7 @@ import numpy as np
 import sys
 
 tsv = sys.argv[1]
+png = sys.argv[2]
 # Read the data
 df = pd.read_csv(tsv, sep='\t', header=0)
 
@@ -46,7 +47,7 @@ for i, combo in enumerate(combinations):
 
 # Adjust layout and save
 plt.tight_layout()
-plt.savefig('figures/dxy_visualization_by_presence.png')
+plt.savefig(png)
 
 # If you'd like to use log transformation with a larger epsilon
 # Uncomment and run this additional code
