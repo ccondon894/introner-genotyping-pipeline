@@ -49,7 +49,7 @@ rule filter_blast_results:
         high_conf_results = os.path.join(OUTPUT_DIR, "{genome_basename}_filtered_blast_results.txt")
     shell:
         """
-        awk '($3 >= 80) && ($6 >= 0.9 * $4) && ($6 <= 1.1 * $4)' {input.blast_results} > {output.high_conf_results}
+        awk '($3 >= 80) && ($6 >= 0.8 * $4) && ($6 <= 1.2 * $4)' {input.blast_results} > {output.high_conf_results}
         """
 
 rule convert_blast_to_bed:

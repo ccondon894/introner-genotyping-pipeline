@@ -9,10 +9,11 @@ left_bed = sys.argv[3]
 right_bed = sys.argv[4]
 
 
-meta_df = pd.read_csv(metadata_file, sep="\t", header=0, index_col=0)
+meta_df = pd.read_csv(metadata_file, sep="\t", header=0)
 
-sample_df = meta_df[meta_df['sample_name'] == sample_name]
-sample_df = sample_df[sample_df['start'] != '?']
+sample_df = meta_df[meta_df['sample'] == sample_name]
+sample_df = sample_df[sample_df['presence'] != 3]
+sample_df = sample_df[sample_df['start'] > 100]
 sample_df['start'] = sample_df['start'].astype(int)
 sample_df['end'] = sample_df['end'].astype(int)
 sample_df = sample_df.sort_values(by=['contig', 'start'])

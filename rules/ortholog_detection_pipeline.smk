@@ -3,11 +3,12 @@ import os
 GENOME_DIR = "/scratch1/chris/introner-genotyping-pipeline/graph-assemblies/"
 OUTPUT_DIR = "/scratch1/chris/introner-genotyping-pipeline/graph_blast_results"
 GT_DIR = "/scratch1/chris/introner-genotyping-pipeline/genotype_matrixes"
-SAMPLES = ["CCMP1545", "CCMP490", "RCC114", "RCC1614", "RCC1698", "RCC1749", 
-           "RCC2482", "RCC3052", "RCC373", "RCC465", "RCC629", "RCC647", 
-           "RCC692", "RCC693", "RCC833", "RCC835"]
+FIGURES = "/scratch1/chris/introner-genotyping-pipeline/figures"
+SAMPLES = ["CCMP1545", "RCC114", "RCC1614", "RCC1698", "RCC1749", 
+           "RCC2482", "RCC3052", "RCC373", "RCC465", "RCC629", 
+           "RCC692", "RCC693", "RCC833"]
 
-LOCUS_THRESHOLD = 0.8  # Minimum sequence similarity for locus presence
+
 
 def get_targets(query):
     return [s for s in SAMPLES if s != query]
@@ -21,15 +22,11 @@ rule all:
         [os.path.join(OUTPUT_DIR, f"{query}_{target}.right_flank.sorted.bam")
          for query in SAMPLES
          for target in SAMPLES if target != query],
-        # [os.path.join(OUTPUT_DIR, f"{query}.ortholog_results.adjusted.tsv")
-        #  for query in SAMPLES] +
-        # Add index files
-        os.path.join(GT_DIR, "genotype_matrix.metadata.4.tsv"),
-        os.path.join(GT_DIR, "genotype_matrix.calls.4.tsv"),
-
+        os.path.join(GT_DIR, "genotype_matrix.tsv"),
+       
 rule extract_flanks:
     input:
-        fa = os.path.join(OUTPUT_DIR, "{sample}.candidate_loci_plus_flanks.filtered.fa")
+        fa = os.path.join(OUTPUT_DIR, "{sample}.candidate_loci_plus_flanks.filtered.similarity_checked.fa")
     output:
         left = os.path.join(OUTPUT_DIR, "{sample}.left_flanks.fa"),
         right = os.path.join(OUTPUT_DIR, "{sample}.right_flanks.fa")
@@ -77,66 +74,28 @@ rule bwa_align_flanks:
         samtools index {output.right_bam}
         """
 
-rule analyze_bam_alignments:
+rule pair_orthologs:
     input:
-        left_bam = os.path.join(OUTPUT_DIR, "{query}_{target}.left_flank.sorted.bam"),
-        right_bam = os.path.join(OUTPUT_DIR, "{query}_{target}.right_flank.sorted.bam"),
-        query_fa = os.path.join(OUTPUT_DIR, "{query}.candidate_loci_plus_flanks.filtered.fa"),
-        target_fa = os.path.join(GENOME_DIR, "{target}.vg_paths.fa")
+        left_bam = [os.path.join(OUTPUT_DIR, f"{query}_{target}.left_flank.sorted.bam")
+         for query in SAMPLES
+         for target in SAMPLES if target != query],
+        right_bam = [os.path.join(OUTPUT_DIR, f"{query}_{target}.right_flank.sorted.bam")
+         for query in SAMPLES
+         for target in SAMPLES if target != query],
     output:
-        tsv = os.path.join(OUTPUT_DIR, "{query}_{target}.ortholog_pairs.tsv")
+        orthologs = os.path.join(GT_DIR, "ortholog_results.tsv")
     shell:
         """
-        python scripts/analyze_bam_alignments.py \
-            --left_bam {input.left_bam} \
-            --right_bam {input.right_bam} \
-            --query_fa {input.query_fa} \
-            --target_fa {input.target_fa} \
-            --output {output.tsv}
-        """
-        
-
-rule combine_results:
-    input:
-        ortholog_pairs = lambda wildcards: expand(os.path.join(OUTPUT_DIR, "{{query}}_{target}.ortholog_pairs.tsv"),
-                              target=[s for s in SAMPLES if s != wildcards.query])
-    output:
-        combined = os.path.join(OUTPUT_DIR, "{query}.ortholog_results.tsv")
-    shell:
-        """
-        python scripts/combine_ortholog_results.py \
-            --input_files {input.ortholog_pairs} \
-            --output {output.combined}
+        python scripts/introner_genotype_matrix_builder.py {OUTPUT_DIR} {output.orthologs}
         """
 
-rule adjust_coordinates:
+rule build_genotype_matrix:
     input:
-        combined = os.path.join(OUTPUT_DIR, "{query}.ortholog_results.tsv"),
-        bed_dir = OUTPUT_DIR
+        orthologs = os.path.join(GT_DIR, "ortholog_results.tsv"),
     output:
-        combined = os.path.join(OUTPUT_DIR, "{query}.ortholog_results.adjusted.tsv"),
+        genotype_matrix = os.path.join(GT_DIR, "genotype_matrix.tsv"),
     shell:
         """
-        python scripts/adjust_bed_coordinates.py {input.combined} {input.bed_dir} {output.combined}
+        python scripts/introner_network.py {input.orthologs} {output.genotype_matrix}
         """
 
-rule combine_all_results:
-    input:
-        sample_results = expand(os.path.join(OUTPUT_DIR, "{query}.ortholog_results.adjusted.tsv"), query=SAMPLES),
-    output:
-        combined = os.path.join(OUTPUT_DIR, "combined_orthologs.tsv"),
-    shell:
-        """
-        python scripts/make_initial_genotype_matrix.py {output.combined}
-        """
-
-rule make_genotype_matrixes:
-    input:
-        combined = os.path.join(OUTPUT_DIR, "combined_orthologs.tsv"),
-    output:
-        md = os.path.join(GT_DIR, "genotype_matrix.metadata.4.tsv"),
-        calls = os.path.join(GT_DIR, "genotype_matrix.calls.4.tsv")
-    shell:
-        """
-        python scripts/make_genotype_matrix_v2.py {input.combined} {output.md} {output.calls}
-        """
