@@ -5,6 +5,9 @@
 /.snakemake
 /scratch1/chris/introner-genotyping-pipeline/.snakemake/metadata
 /temp*
+/figures/*
+/plots/*
+
 # Common bioinformatics file formats
 *.bam
 *.sam
@@ -57,7 +60,7 @@
 *.db
 *.zip
 *.tbi
-
+*.png
 
 # IDE and editor files
 .vscode/
