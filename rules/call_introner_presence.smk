@@ -37,7 +37,7 @@ rule align_reads:
 
 rule make_loci_beds:
     input:
-        gt_matrix = os.path.join(GT_DIR, "genotype_matrix.tsv"),
+        gt_matrix = os.path.join(GT_DIR, "genotype_matrix_oriented.tsv"),
     
     output:
         bed = os.path.join(OUTPUT_DIR, "{path}.loci.bed")
@@ -63,7 +63,7 @@ rule call_introner_presence:
     input:
         bed = os.path.join(OUTPUT_DIR, "{strain}.loci.bed"),
         tsv = os.path.join(OUTPUT_DIR, "{strain}.locus_depth.tsv"),
-        gt_matrix = os.path.join(GT_DIR, "genotype_matrix.tsv")
+        gt_matrix = os.path.join(GT_DIR, "genotype_matrix_oriented.tsv")
     output:
         bed = os.path.join(OUTPUT_DIR, "{strain}.loci.coverage_calls.bed"),
 
@@ -75,7 +75,7 @@ rule call_introner_presence:
 
 rule update_gt_matrix:
     input:
-        gt_matrix = os.path.join(GT_DIR, "genotype_matrix.tsv"),
+        gt_matrix = os.path.join(GT_DIR, "genotype_matrix_oriented.tsv"),
         beds = expand(os.path.join(OUTPUT_DIR, "{strain}.loci.coverage_calls.bed"), strain=strains)
     output:
        gt_matrix = os.path.join(GT_DIR, "genotype_matrix_updated.tsv"),
@@ -90,10 +90,10 @@ rule plot_genotype_matrix_data:
     input:
         genotype_matrix = os.path.join(GT_DIR, "genotype_matrix_updated.tsv"),
     output:
-        plot1 = os.path.join(FIGURES, f"genotype_matrix_analysis_15052025_2d_afs.png"),
+        plot1 = os.path.join(FIGURES, f"genotype_matrix_analysis_28052025_2d_afs.png"),
         summary = os.path.join(GT_DIR, "genotype_matrix_summary.txt"),
     params:
-        prefix = "genotype_matrix_analysis_15052025"
+        prefix = "genotype_matrix_analysis_28052025"
     shell:
         """
         python scripts/genotype_matrix_data_viz.py {input.genotype_matrix} {params.prefix} > {output.summary}

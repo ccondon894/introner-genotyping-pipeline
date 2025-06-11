@@ -23,6 +23,8 @@ rule all:
          for query in SAMPLES
          for target in SAMPLES if target != query],
         os.path.join(GT_DIR, "genotype_matrix.tsv"),
+        os.path.join(GT_DIR, "genotype_matrix_oriented.tsv"),
+
        
 rule extract_flanks:
     input:
@@ -99,3 +101,14 @@ rule build_genotype_matrix:
         python scripts/introner_network.py {input.orthologs} {output.genotype_matrix}
         """
 
+rule fix_orientations:
+    input:
+        genotype_matrix = os.path.join(GT_DIR, "genotype_matrix.tsv"),
+    output:
+        fixed_matrix = os.path.join(GT_DIR, "genotype_matrix_oriented.tsv"),
+    params:
+        genome_dir = GENOME_DIR
+    shell:
+        """
+        python scripts/check_orientation.py {input.genotype_matrix} {params.genome_dir} {output.fixed_matrix} --threads 20
+        """

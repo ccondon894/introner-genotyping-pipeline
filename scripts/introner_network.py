@@ -16,9 +16,23 @@ def build_ortholog_groups(input_tsv):
     """
     print(f"Reading input data from {input_tsv}...")
     
+    # DEBUG - Track specific introner
+    debug_introner = "introner_seq_1554_RCC373-intronerized#0#18#0_34728_35116"
+    print(f"\n*** DEBUGGING INTRONER: {debug_introner} ***")
+    
     # Read the input TSV
     df = pd.read_csv(input_tsv, sep='\t')
     print(f"Read {len(df)} query-target pairs")
+    
+    # DEBUG - Check if our target introner is in the input
+    debug_rows = df[df['query_id'] == debug_introner]
+    print(f"DEBUG: Found {len(debug_rows)} rows with query_id = {debug_introner}")
+    if len(debug_rows) > 0:
+        print("DEBUG: Sample of rows:")
+        for i, (_, row) in enumerate(debug_rows.head(3).iterrows()):
+            print(f"  Row {i+1}: {row['query']} -> {row['target']}, scenario={row['scenario']}")
+    else:
+        print("DEBUG: Target introner NOT found in input data!")
     
     # DEBUG - Count distinct introners per sample in input file
     input_introners_by_sample = {}
@@ -37,6 +51,14 @@ def build_ortholog_groups(input_tsv):
     # Filter out rows with scenario 3 (missing data)
     valid_df = df[df['scenario'] != 3].copy()
     print(f"After filtering scenario 3: {len(valid_df)} pairs")
+    
+    # DEBUG - Check if our target introner survived scenario 3 filtering
+    debug_rows_after_filter = valid_df[valid_df['query_id'] == debug_introner]
+    print(f"DEBUG: After scenario 3 filtering: {len(debug_rows_after_filter)} rows with {debug_introner}")
+    if len(debug_rows_after_filter) == 0 and len(debug_rows) > 0:
+        print("DEBUG: *** INTRONER WAS LOST DURING SCENARIO 3 FILTERING ***")
+        lost_scenarios = debug_rows['scenario'].value_counts()
+        print(f"DEBUG: Lost rows had scenarios: {lost_scenarios.to_dict()}")
     
     # DEBUG - Count how many introners were filtered due to scenario 3
     scenario3_filtered = {}
@@ -57,12 +79,45 @@ def build_ortholog_groups(input_tsv):
     
     # Create sample-specific identifiers for nodes
     # Explicitly convert coordinates to integers for the node IDs to prevent float formatting
+    def safe_int_convert(x):
+        """Safely convert to int, handling empty strings and None values"""
+        if pd.isnull(x) or x == '' or x == 'nan':
+            return ''
+        try:
+            # Convert to float first to handle both int and float inputs, then to int
+            float_val = float(x)
+            # Only convert if it's a whole number (no decimals)
+            if float_val.is_integer():
+                return str(int(float_val))
+            else:
+                return str(int(float_val))  # Truncate decimals
+        except (ValueError, TypeError):
+            return ''
+    
+    # Convert all coordinate columns to integers first
+    def convert_to_int_column(series):
+        """Convert a pandas series to integers, preserving None/NaN as None"""
+        def safe_convert(x):
+            if pd.isnull(x) or x == '' or x == 'nan':
+                return None
+            try:
+                return int(float(x))
+            except (ValueError, TypeError):
+                return None
+        return series.apply(safe_convert)
+    
+    valid_df['query_start'] = convert_to_int_column(valid_df['query_start'])
+    valid_df['query_end'] = convert_to_int_column(valid_df['query_end'])
+    valid_df['target_start'] = convert_to_int_column(valid_df['target_start'])
+    valid_df['target_end'] = convert_to_int_column(valid_df['target_end'])
+    
+    # Now create node IDs using the integer columns
     valid_df['query_node'] = valid_df['query'] + '|' + valid_df['query_contig'].astype(str) + ':' + \
-                            valid_df['query_start'].apply(lambda x: str(int(x)) if pd.notnull(x) else '').astype(str) + '-' + \
-                            valid_df['query_end'].apply(lambda x: str(int(x)) if pd.notnull(x) else '').astype(str)
+                            valid_df['query_start'].apply(lambda x: str(x) if x is not None else '') + '-' + \
+                            valid_df['query_end'].apply(lambda x: str(x) if x is not None else '')
     valid_df['target_node'] = valid_df['target'] + '|' + valid_df['target_contig'].astype(str) + ':' + \
-                             valid_df['target_start'].apply(lambda x: str(int(x)) if pd.notnull(x) else '').astype(str) + '-' + \
-                             valid_df['target_end'].apply(lambda x: str(int(x)) if pd.notnull(x) else '').astype(str)
+                             valid_df['target_start'].apply(lambda x: str(x) if x is not None else '') + '-' + \
+                             valid_df['target_end'].apply(lambda x: str(x) if x is not None else '')
     
     # Build a graph of relationships
     G = nx.Graph()
@@ -73,8 +128,8 @@ def build_ortholog_groups(input_tsv):
         G.add_node(row['query_node'], 
                    sample=row['query'],
                    contig=row['query_contig'],
-                   start=row['query_start'],
-                   end=row['query_end'],
+                   start=int(row['query_start']) if row['query_start'] is not None else None,
+                   end=int(row['query_end']) if row['query_end'] is not None else None,
                    gene=row['query_gene'],
                    family=row['query_family'],
                    splice_site=row['query_splice_site'],
@@ -84,8 +139,8 @@ def build_ortholog_groups(input_tsv):
         G.add_node(row['target_node'], 
                    sample=row['target'],
                    contig=row['target_contig'],
-                   start=row['target_start'],
-                   end=row['target_end'],
+                   start=int(row['target_start']) if row['target_start'] is not None else None,
+                   end=int(row['target_end']) if row['target_end'] is not None else None,
                    gene=row['target_gene'],
                    family=row['target_family'],
                    splice_site=row['target_splice_site'],
@@ -98,6 +153,31 @@ def build_ortholog_groups(input_tsv):
                    scenario=row['scenario'])
     
     print(f"Built graph with {len(G.nodes)} nodes and {len(G.edges)} edges")
+    
+    # DEBUG - Check if our target introner made it into the graph
+    # Find the query node by coordinates since introner ID is not part of node name
+    debug_query_node = None
+    if len(debug_rows_after_filter) > 0:
+        # Get the expected coordinates from the first row
+        first_row = debug_rows_after_filter.iloc[0]
+        expected_node = f"{first_row['query']}|{first_row['query_contig']}:{safe_int_convert(first_row['query_start'])}-{safe_int_convert(first_row['query_end'])}"
+        
+        if expected_node in G.nodes:
+            debug_query_node = expected_node
+            print(f"DEBUG: Found query node in graph: {debug_query_node}")
+            
+            # Check how many edges this node has
+            neighbors = list(G.neighbors(debug_query_node))
+            print(f"DEBUG: Query node has {len(neighbors)} neighbors (edges)")
+            for neighbor in neighbors[:5]:  # Show first 5 neighbors
+                neighbor_attrs = G.nodes[neighbor]
+                print(f"DEBUG: Neighbor: {neighbor_attrs['sample']} at {neighbor_attrs['contig']}:{neighbor_attrs['start']}-{neighbor_attrs['end']}")
+        else:
+            print("DEBUG: *** QUERY NODE NOT FOUND IN GRAPH ***")
+            print(f"DEBUG: Expected node: {expected_node}")
+            print("DEBUG: Node missing from graph completely!")
+    else:
+        print("DEBUG: No rows available after filtering to create expected node")
     
     # DEBUG - Track which introners made it into the graph
     graph_introners_by_sample = defaultdict(set)
@@ -164,6 +244,19 @@ def build_ortholog_groups(input_tsv):
     components = list(nx.connected_components(G))
     print(f"\nFound {len(components)} initial connected components")
     
+    # DEBUG - Find which component contains our target introner
+    debug_component_idx = None
+    debug_component = None
+    for i, component in enumerate(components):
+        if debug_query_node and debug_query_node in component:
+            debug_component_idx = i
+            debug_component = component
+            print(f"DEBUG: Found introner in component {i} with {len(component)} nodes")
+            break
+    
+    if debug_query_node and debug_component_idx is None:
+        print("DEBUG: *** INTRONER QUERY NODE NOT FOUND IN ANY COMPONENT ***")
+    
     # DEBUG - Count component sizes for insight
     component_sizes = [len(comp) for comp in components]
     print(f"Component size stats - Min: {min(component_sizes)}, Max: {max(component_sizes)}, Avg: {sum(component_sizes)/len(component_sizes):.1f}")
@@ -222,6 +315,11 @@ def build_ortholog_groups(input_tsv):
     removed_nodes_by_sample = defaultdict(int)
     
     for i, component in enumerate(components):
+        # DEBUG - Check if this is our component
+        is_debug_component = (debug_component_idx is not None and i == debug_component_idx)
+        if is_debug_component:
+            print(f"\nDEBUG: Processing component {i} containing our target introner")
+        
         # Create a map of sample to nodes
         sample_to_nodes = defaultdict(list)
         for node in component:
@@ -231,14 +329,44 @@ def build_ortholog_groups(input_tsv):
         # Check if we have any conflicts (a sample appears multiple times)
         has_conflicts = any(len(nodes) > 1 for nodes in sample_to_nodes.values())
         
+        if is_debug_component:
+            print(f"DEBUG: Component has {len(sample_to_nodes)} samples")
+            print(f"DEBUG: Has conflicts: {has_conflicts}")
+            print(f"\nDEBUG: *** ENTIRE CONNECTED COMPONENT ANALYSIS ***")
+            print(f"DEBUG: Component {i} contains {len(component)} total nodes")
+            
+            # Print all nodes in the component with their attributes
+            for node in component:
+                attrs = G.nodes[node]
+                print(f"DEBUG: Node: {node}")
+                print(f"  Sample: {attrs['sample']}, Coords: {attrs['contig']}:{attrs['start']}-{attrs['end']}")
+                print(f"  Gene: {attrs.get('gene', 'N/A')}, Family: {attrs.get('family', 'N/A')}")
+                print(f"  Presence: {attrs.get('presence', 'N/A')}, Introner ID: {attrs.get('introner_id', 'N/A')}")
+                
+                # Show connections for this node
+                neighbors = list(G.neighbors(node))
+                print(f"  Connected to {len(neighbors)} nodes:")
+                for neighbor in neighbors:
+                    neighbor_attrs = G.nodes[neighbor]
+                    edge_attrs = G.edges[node, neighbor]
+                    print(f"    -> {neighbor_attrs['sample']} at {neighbor_attrs['contig']}:{neighbor_attrs['start']}-{neighbor_attrs['end']} (score: {edge_attrs.get('score', 0)}, scenario: {edge_attrs.get('scenario', 'N/A')})")
+                print()
+            
+            print(f"DEBUG: *** END COMPONENT ANALYSIS ***\n")
+            
+            for sample, nodes in sample_to_nodes.items():
+                if len(nodes) > 1:
+                    print(f"DEBUG: Sample {sample} has {len(nodes)} conflicting nodes")
+        
         if not has_conflicts:
             # No conflicts, add the component as is
             resolved_groups.append(list(component))
+            if is_debug_component:
+                print("DEBUG: Component added without conflicts")
         else:
             # DEBUG - Count conflicts
-            conflict_samples = [sample for sample, nodes in sample_to_nodes.items() if len(nodes) > 1]
-            total_conflicts = sum(len(nodes) - 1 for sample, nodes in sample_to_nodes.items() if len(nodes) > 1)
-            print(f"Component {i} has conflicts: {len(conflict_samples)} samples with {total_conflicts} total conflicts")
+            if is_debug_component:
+                print("DEBUG: *** STARTING CONFLICT RESOLUTION FOR OUR COMPONENT ***")
             
             # Resolve conflicts by creating a subgraph and finding the maximum weight clique
             # This is a simplification - in a real implementation you'd need a more sophisticated algorithm
@@ -259,6 +387,14 @@ def build_ortholog_groups(input_tsv):
                 # Remove the lowest-weighted node
                 lowest_node = min(node_weights, key=node_weights.get)
                 component_removed_nodes.append((lowest_node, conflict_sample))
+                
+                # DEBUG - Check if we're removing our target node
+                if is_debug_component and debug_query_node and lowest_node == debug_query_node:
+                    print(f"DEBUG: *** OUR TARGET NODE IS BEING REMOVED! ***")
+                    print(f"DEBUG: Node being removed: {lowest_node}")
+                    print(f"DEBUG: Node weights were: {node_weights}")
+                    print(f"DEBUG: Conflict sample: {conflict_sample}")
+                
                 subgraph.remove_node(lowest_node)
                 removed_nodes_count += 1
                 removed_nodes_by_sample[conflict_sample] += 1
@@ -274,6 +410,13 @@ def build_ortholog_groups(input_tsv):
             
             # Add the resolved component
             resolved_groups.append(list(subgraph.nodes))
+            
+            if is_debug_component:
+                print(f"DEBUG: Component resolved. Final size: {len(subgraph.nodes)}")
+                if debug_query_node in subgraph.nodes:
+                    print("DEBUG: Our target node survived conflict resolution")
+                else:
+                    print("DEBUG: *** OUR TARGET NODE WAS REMOVED DURING CONFLICT RESOLUTION ***")
     
     print(f"\nAfter resolving conflicts: {len(resolved_groups)} ortholog groups")
     print(f"Removed {removed_nodes_count} nodes during conflict resolution")
@@ -286,6 +429,14 @@ def build_ortholog_groups(input_tsv):
     for i, group in enumerate(resolved_groups):
         for node in group:
             node_to_group[node] = f"ortholog_id_{i+1:04d}"
+    
+    # DEBUG - Check if our target node made it to final output
+    if debug_query_node:
+        final_ortholog_id = node_to_group.get(debug_query_node)
+        if final_ortholog_id:
+            print(f"DEBUG: Target node assigned to {final_ortholog_id}")
+        else:
+            print("DEBUG: *** TARGET NODE NOT FOUND IN FINAL ORTHOLOG GROUPS ***")
     
     # Create the output dataframe
     rows = []

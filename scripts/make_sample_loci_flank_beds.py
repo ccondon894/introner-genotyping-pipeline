@@ -22,10 +22,18 @@ with open(left_bed, 'w') as l, open(right_bed, 'w') as r:
     for index, row in sample_df.iterrows():
 
         contig = row['contig']
-        left_start = row['start']
-        left_end = row['start'] + 100
-        right_start = row['end'] - 100
-        right_end = row['end']
+        # handle sequences that are reverse complemented
+        if row['orientation'] == 'reverse':
+            left_start = row['end'] - 100
+            left_end = row['end']
+            right_start = row['start']
+            right_end = row['start'] + 100
+        else:
+            left_start = row['start']
+            left_end = row['start'] + 100
+            right_start = row['end'] - 100
+            right_end = row['end']
+            
         ortholog_id = row['ortholog_id']
 
         l.write(f"{contig}\t{left_start}\t{left_end}\t{ortholog_id}\n")

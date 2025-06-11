@@ -78,9 +78,8 @@ def classify_ortholog_groups(df, group1, group2):
             g1_status = "present" if g1_present_count == len(g1_presence) else "absent"
             g2_status = "present" if g2_present_count == len(g2_presence) else "absent"
             
-            # Skip if both groups are absent
-            if g1_status == "absent" and g2_status == "absent":
-                continue
+            # Include groups even if both are absent (for diversity analysis)
+            # Previously skipped groups where both were absent, but we want to analyze those too
                 
         elif not g1_monomorphic and g2_monomorphic:
             category = "polymorphic_group1"
@@ -122,7 +121,7 @@ def prepare_fasta_files(df, fasta_dict, classification, output_dir, group1, grou
                 g1_file = os.path.join(output_dir, f"{ortholog_id}.g1.{side}_flank.fa")
                 with open(g1_file, 'w') as f:
                     for _, row in ortholog_df[ortholog_df['sample'].isin(group1)].iterrows():
-                        if row['presence'] == 1:  # Only include present sequences
+                        if row['presence'] in [1, 2]:  # Include both present (1) and absent (2) sequences
                             flank_id = get_flank_id(row, side)
                             if flank_id in fasta_dict:
                                 f.write(f">{row['sample']}_{flank_id}\n{fasta_dict[flank_id]}\n")
@@ -131,7 +130,7 @@ def prepare_fasta_files(df, fasta_dict, classification, output_dir, group1, grou
                 g2_file = os.path.join(output_dir, f"{ortholog_id}.g2.{side}_flank.fa")
                 with open(g2_file, 'w') as f:
                     for _, row in ortholog_df[ortholog_df['sample'].isin(group2)].iterrows():
-                        if row['presence'] == 1:  # Only include present sequences
+                        if row['presence'] in [1, 2]:  # Include both present (1) and absent (2) sequences
                             flank_id = get_flank_id(row, side)
                             if flank_id in fasta_dict:
                                 f.write(f">{row['sample']}_{flank_id}\n{fasta_dict[flank_id]}\n")
@@ -163,11 +162,19 @@ def get_flank_id(row, side):
     start = int(row['start'])
     end = int(row['end'])
     contig = row['contig']
+    orientation = row['orientation']
     
-    if side == "left":
-        flank_start, flank_end = start, start + 100
-    else:
-        flank_start, flank_end = end - 100, end
+    # Handle reverse orientation by swapping biological left/right flanks
+    if orientation == 'reverse':
+        if side == "left":  # Biological 5' flank
+            flank_start, flank_end = end - 100, end
+        else:  # Biological 3' flank  
+            flank_start, flank_end = start, start + 100
+    else:  # Forward orientation
+        if side == "left":
+            flank_start, flank_end = start, start + 100
+        else:
+            flank_start, flank_end = end - 100, end
         
     return f"{contig}:{flank_start}-{flank_end}"
 

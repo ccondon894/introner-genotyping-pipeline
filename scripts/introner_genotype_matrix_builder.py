@@ -41,36 +41,7 @@ def load_introner_metadata(bed_dir, samples):
     
     return metadata
 
-def find_matching_introner(metadata, sample, contig, position, wiggle=30):
-    """
-    Find an introner in the metadata that matches the given coordinates.
-    
-    Args:
-        metadata: Introner metadata dictionary
-        sample: Sample name
-        contig: Contig name
-        position: Position to check (start or end of alignment)
-        wiggle: Wiggle room for coordinate matching in bp
-        
-    Returns:
-        Tuple of (start, end) coordinates if found, None otherwise
-    """
-    if sample not in metadata or contig not in metadata[sample]:
-        return None
-        
-    # Check each introner in this contig
-    for (start, end), _ in metadata[sample][contig].items():
-        # Check if position is near the left flank
-        if abs(position - start) <= wiggle or abs(position - (start + 100)) <= wiggle:
-            return (start, end)
-            
-        # Check if position is near the right flank
-        if abs(position - (end - 100)) <= wiggle or abs(position - end) <= wiggle:
-            return (start, end)
-            
-    return None
-
-def find_overlapping_introner(metadata, sample, contig, target_start, target_end, min_overlap_fraction=0.3):
+def find_overlapping_introner(metadata, sample, contig, target_start, target_end, min_overlap_fraction=0.6):
     """
     Find an introner in the metadata that overlaps with the target coordinates.
     
@@ -116,18 +87,6 @@ def find_overlapping_introner(metadata, sample, contig, target_start, target_end
     if best_overlap_fraction >= min_overlap_fraction:
         return best_match
         
-    # As a fallback, try using the original wiggle-based approach
-    # This might catch cases where flanking alignments don't fully overlap with the introner
-    wiggle = 35  # Same wiggle value as before
-    for (start, end), _ in metadata[sample][contig].items():
-        # Check if target_start is near the beginning of the introner
-        if abs(target_start - start) <= wiggle:
-            return (start, end)
-        
-        # Check if target_end is near the end of the introner
-        if abs(target_end - end) <= wiggle:
-            return (start, end)
-            
     return None
 
 def parse_query_name(query_name, flank_type):
@@ -217,7 +176,8 @@ def extract_best_alignments(bam_path, flank_type, export_quality_info=False):
                     'target_start': read.reference_start,
                     'target_end': read.reference_end,
                     'quality': current_quality,
-                    'query_metadata': query_metadata
+                    'query_metadata': query_metadata,
+                    'is_reverse': read.is_reverse
                 }
                 filtered_query_ids.add(query_id)
     
@@ -265,9 +225,6 @@ def build_ortholog_dictionary(samples, bam_dir, bed_dir, export_quality_info=Fal
     total_query_ids_kept = 0
     query_ids_by_scenario = {1: 0, 2: 0, 3: 0}  # Track counts by scenario
     
-    # Track suspicious target regions
-    suspicious_regions_count = 0
-    
     # Collect alignment quality information if requested
     all_quality_info = []
     
@@ -307,12 +264,6 @@ def build_ortholog_dictionary(samples, bam_dir, bed_dir, export_quality_info=Fal
             all_query_ids = set(left_alignments.keys()) | set(right_alignments.keys())
             print(f"Total unique query IDs for {query} -> {target}: {len(all_query_ids)}")
             
-            # Count query IDs with only left or right alignment
-            left_only = set(left_alignments.keys()) - set(right_alignments.keys())
-            right_only = set(right_alignments.keys()) - set(left_alignments.keys())
-            both = set(left_alignments.keys()) & set(right_alignments.keys())
-            print(f"Left flank only: {len(left_only)}, Right flank only: {len(right_only)}, Both flanks: {len(both)}")
-            
             total_query_ids_processed += len(all_query_ids)
             
             # Process each query ID
@@ -320,14 +271,12 @@ def build_ortholog_dictionary(samples, bam_dir, bed_dir, export_quality_info=Fal
                 left_aln = left_alignments.get(query_id)
                 right_aln = right_alignments.get(query_id)
                 
-                # Check for the specific problematic query mentioned
-                is_problematic_query = "CCMP1545#0#scaffold_15:648456-648819|introner_seq_4078" in query_id
-                
                 # Get query metadata
                 query_contig, coords_range = left_aln['query_coords'].split(':') if left_aln else (right_aln['query_coords'].split(':') if right_aln else (None, None))
                 query_start, query_end = map(int, coords_range.split('-')) if coords_range else (None, None)
                 query_coords = None
                 
+                # If missing either left or right alignment, mark as scenario 3
                 if not left_aln or not right_aln:
                     ortholog_dict[query][target][query_id] = {
                         'scenario': 3,
@@ -340,12 +289,15 @@ def build_ortholog_dictionary(samples, bam_dir, bed_dir, export_quality_info=Fal
                         'target_start': None,
                         'target_end': None,
                         'query_metadata': None,
-                        'target_metadata': None
+                        'target_metadata': None,
+                        'orientation': 'unknown',
+                        'left_reverse': None,
+                        'right_reverse': None
                     }
                     query_ids_by_scenario[3] += 1
                     continue
                 
-                # Check if alignments are on same contig but not in correct orientation
+                # Check if alignments are on same contig
                 if left_aln['target_contig'] != right_aln['target_contig']:
                     ortholog_dict[query][target][query_id] = {
                         'scenario': 3,
@@ -358,76 +310,84 @@ def build_ortholog_dictionary(samples, bam_dir, bed_dir, export_quality_info=Fal
                         'target_start': None,
                         'target_end': None,
                         'query_metadata': None,
-                        'target_metadata': None
+                        'target_metadata': None,
+                        'orientation': 'unknown',
+                        'left_reverse': None,
+                        'right_reverse': None
                     }
                     query_ids_by_scenario[3] += 1
                     continue
-                    
-                # If alignments are on the same contig but inverted (left end > right start),
-                # we'll still process them as they could be due to genome rearrangements
-                is_inverted = left_aln['target_end'] > right_aln['target_start']
                 
-                # Case 1 or 2: Both flanks aligned (potentially inverted)
+                # Both flanks aligned to same contig
                 target_contig = left_aln['target_contig']
                 
-                # For inverted alignments, flip the coordinates for consistency
-                if is_inverted:
-                    target_start = right_aln['target_start']
-                    target_end = left_aln['target_end']
+                # Get orientation information early for filtering
+                left_reverse = left_aln.get('is_reverse', False)
+                right_reverse = right_aln.get('is_reverse', False)
+                
+                # Calculate the gap between flanks (the potential introner region)
+                # We need to find which flank comes first in the target sequence
+                if left_aln['target_start'] <= right_aln['target_start']:
+                    # Left flank comes first
+                    gap_start = left_aln['target_end']
+                    gap_end = right_aln['target_start']
                 else:
-                    target_start = left_aln['target_start']
-                    target_end = right_aln['target_end']
+                    # Right flank comes first (or they overlap)
+                    gap_start = right_aln['target_end']
+                    gap_end = left_aln['target_start']
                 
-                # Debug output for the problematic query or any suspicious ranges
-                target_length = (target_end - target_start) if target_end and target_start else 0
-                query_length = query_end - query_start if query_end and query_start else 0
+                # Calculate the actual gap size between flanks
+                gap_size = max(0, gap_end - gap_start)
                 
-                # Define size thresholds for flagging suspicious pairs
-                min_target_length = 50  # Minimum acceptable target length
-                min_ratio = 0.2  # Target should be at least this fraction of query length
+                # Calculate the total span from leftmost start to rightmost end
+                target_start = min(left_aln['target_start'], right_aln['target_start'])
+                target_end = max(left_aln['target_end'], right_aln['target_end'])
+                total_span = target_end - target_start
                 
-                if (is_problematic_query or 
-                    (target_length < min_target_length and query_length > 5 * target_length)):
-                    suspicious_regions_count += 1
-                    print(f"\nSUSPICIOUS REGION #{suspicious_regions_count}: {query} -> {target}, {query_id}")
-                    print(f"  Query: {query_contig}:{query_start}-{query_end} (length: {query_length})")
-                    print(f"  Left alignment: {left_aln['target_contig']}:{left_aln['target_start']}-{left_aln['target_end']}")
-                    print(f"  Right alignment: {right_aln['target_contig']}:{right_aln['target_start']}-{right_aln['target_end']}")
-                    print(f"  Calculated target: {target_contig}:{target_start}-{target_end} (length: {target_length})")
-                    print(f"  Is inverted: {is_inverted}")
-                    
-                    # For very small targets, try an alternative approach - expand to include the full region between alignments
-                    if target_length < min_target_length:
-                        if is_inverted:
-                            # For inverted alignments, take the full span
-                            corrected_start = min(right_aln['target_start'], left_aln['target_start'])
-                            corrected_end = max(right_aln['target_end'], left_aln['target_end'])
-                        else:
-                            # For normal orientation, take region between the alignments
-                            corrected_start = left_aln['target_end']
-                            corrected_end = right_aln['target_start']
-                        
-                        # Apply correction if it actually helps
-                        corrected_length = corrected_end - corrected_start
-                        
-                        # Only use correction if it makes the target larger and more proportional to query
-                        if corrected_length > target_length and corrected_length >= min(query_length * min_ratio, min_target_length):
-                            print(f"  CORRECTION APPLIED: New target: {target_contig}:{corrected_start}-{corrected_end} (new length: {corrected_length})")
-                            target_start = corrected_start
-                            target_end = corrected_end
-                        else:
-                            # If correction doesn't help, try to ensure minimum reasonable target size
-                            # based on query size, if we have target metadata
-                            mid_point = (target_start + target_end) // 2
-                            desired_length = max(min_target_length, int(query_length * min_ratio))
-                            half_length = desired_length // 2
-                            
-                            # Only apply this expansion if we have confidence in the region
-                            if target_length > 0:
-                                target_start = mid_point - half_length
-                                target_end = mid_point + half_length
-                                print(f"  SIZE CORRECTION: New target: {target_contig}:{target_start}-{target_end} (new length: {target_end-target_start})")
+                # Filter out alignments where flanks are too far apart (likely misalignments)
+                # Only apply to forward alignments where we expect left < right
+                max_reasonable_span = 500
+                if (not left_reverse and not right_reverse and 
+                    total_span > max_reasonable_span):
+                    ortholog_dict[query][target][query_id] = {
+                        'scenario': 3,  # Treat as missing data due to misalignment
+                        'query_id': query_id,
+                        'query_coords': left_aln['query_coords'],
+                        'query_contig': query_contig,
+                        'query_start': query_start,
+                        'query_end': query_end,
+                        'target_contig': None,
+                        'target_start': None,
+                        'target_end': None,
+                        'query_metadata': None,
+                        'target_metadata': None,
+                        'orientation': 'unknown',
+                        'left_reverse': None,
+                        'right_reverse': None
+                    }
+                    query_ids_by_scenario[3] += 1
+                    continue
                 
+                # Two criteria for absence:
+                # 1. Gap between flanks is too small (< 50bp)
+                # 2. Total span is too small (< 200bp) 
+                min_gap_size = 50
+                min_total_span = 200
+                
+                if gap_size < min_gap_size or total_span < min_total_span:
+                    # Either gap between flanks is too small OR total span is too small - classify as absent (scenario 2)
+                    target_coords = None
+                    target_metadata = None
+                    scenario = 2
+                else:
+                    # Both gap and total span are large enough - check if target has an introner at this location
+                    target_coords = find_overlapping_introner(
+                        introner_metadata, target, target_contig, target_start, target_end
+                    )
+                    target_metadata = introner_metadata[target][target_contig].get(target_coords) if target_coords else None
+                    scenario = 1 if target_metadata else 2
+                
+                # Find query coordinates in metadata
                 for (start, end), meta in introner_metadata[query][query_contig].items():
                     if start <= query_start <= end and start <= query_end <= end:
                         query_coords = (start, end)
@@ -435,21 +395,7 @@ def build_ortholog_dictionary(samples, bam_dir, bed_dir, export_quality_info=Fal
                 
                 # Get query metadata - prefer from BAM query name, fall back to BED file
                 query_name_metadata = left_aln.get('query_metadata', {}) or right_aln.get('query_metadata', {})
-                
-                # Check if target has an introner at this location using the overlap-based approach
-                target_coords = find_overlapping_introner(
-                    introner_metadata, target, target_contig, target_start, target_end
-                )
-                
-                # If no overlapping introner found, fall back to the position-based approach
-                if target_coords is None:
-                    target_coords = find_matching_introner(
-                        introner_metadata, target, target_contig, target_start
-                    )
-                
-                # Get metadata from BED files
                 query_bed_metadata = introner_metadata[query][query_contig].get(query_coords) if query_coords else None
-                target_metadata = introner_metadata[target][target_contig].get(target_coords) if target_coords else None
                 
                 # Combine the metadata, prioritizing the query name metadata
                 query_metadata = {}
@@ -458,17 +404,13 @@ def build_ortholog_dictionary(samples, bam_dir, bed_dir, export_quality_info=Fal
                 if query_name_metadata:
                     query_metadata.update(query_name_metadata)
                 
-                # Determine scenario
-                scenario = 1 if target_metadata else 2
+                # Determine orientation pattern
+                orientation = determine_orientation_pattern(left_reverse, right_reverse)
                 
                 # Use target coordinates from metadata if found, otherwise use alignment coordinates
                 if target_coords and scenario == 1:
                     target_start_final = target_coords[0]
                     target_end_final = target_coords[1]
-                    
-                    # Debug output for the case where metadata coords are used
-                    if is_problematic_query:
-                        print(f"  Using metadata coordinates: {target_contig}:{target_start_final}-{target_end_final} (length: {target_end_final-target_start_final})")
                 else:
                     target_start_final = target_start
                     target_end_final = target_end
@@ -484,7 +426,10 @@ def build_ortholog_dictionary(samples, bam_dir, bed_dir, export_quality_info=Fal
                     'target_start': target_start_final,
                     'target_end': target_end_final,
                     'query_metadata': query_metadata,
-                    'target_metadata': target_metadata
+                    'target_metadata': target_metadata,
+                    'orientation': orientation,
+                    'left_reverse': left_reverse,
+                    'right_reverse': right_reverse
                 }
                 query_ids_by_scenario[scenario] += 1
                 total_query_ids_kept += 1
@@ -495,7 +440,6 @@ def build_ortholog_dictionary(samples, bam_dir, bed_dir, export_quality_info=Fal
     # Print debug information
     print(f"Total query IDs processed: {total_query_ids_processed}")
     print(f"Total query IDs kept: {total_query_ids_kept}")
-    print(f"Suspicious regions detected and corrected: {suspicious_regions_count}")
     for scenario, count in query_ids_by_scenario.items():
         print(f"Scenario {scenario}: {count} query IDs")
     
@@ -613,7 +557,10 @@ def add_unaligned_introners_to_ortholog_dict(ortholog_dict, introner_metadata, q
                 'target_start': None,
                 'target_end': None,
                 'query_metadata': introner['query_metadata'],
-                'target_metadata': None
+                'target_metadata': None,
+                'orientation': 'unknown',
+                'left_reverse': None,
+                'right_reverse': None
             }
             added_count += 1
             
@@ -700,6 +647,32 @@ def analyze_alignment_quality(read):
         'ref_end': read.reference_end
     }
 
+def determine_orientation_pattern(left_reverse, right_reverse):
+    """
+    Determine the overall orientation pattern for an introner based on 
+    left and right flank alignment orientations.
+    
+    Args:
+        left_reverse: Boolean indicating if left flank aligned to reverse strand
+        right_reverse: Boolean indicating if right flank aligned to reverse strand
+    
+    Returns:
+        String indicating orientation pattern:
+        - 'forward': Both flanks align forward
+        - 'reverse': Both flanks align reverse (introner on reverse strand)
+        - 'mixed': Mixed orientations (potential inversion/rearrangement)
+        - 'partial': Only one flank available
+        - 'unknown': Insufficient data
+    """
+    if left_reverse is None and right_reverse is None:
+        return 'unknown'
+    elif left_reverse is None or right_reverse is None:
+        return 'partial'
+    elif left_reverse == right_reverse:
+        return 'reverse' if left_reverse else 'forward'
+    else:
+        return 'mixed'
+
 def main():
     # Configuration
     samples = ["CCMP1545", "RCC114", "RCC1614", "RCC1698", "RCC1749", 
@@ -741,70 +714,96 @@ def main():
     for sample, count in query_entries_by_sample.items():
         print(f"  {sample}: {count}")
     
-    # Output results to file
-    with open(sys.argv[2], "w") as outfile:
-        # Write header
-        outfile.write("query\ttarget\tquery_id\tscenario\tquery_contig\tquery_start\tquery_end\ttarget_contig\t"
-                      "target_start\ttarget_end\tquery_gene\ttarget_gene\tquery_family\ttarget_family\t"
-                      "query_splice_site\ttarget_splice_site\tquery_introner_id\ttarget_introner_id\tmatch_score\n")
-        
-        # Track rows written
-        rows_written = 0
-        
-        # Write data
-        for query in ortholog_dict:
-            for target in ortholog_dict[query]:
-                for query_id, match in ortholog_dict[query][target].items():
-                    # Extract metadata fields with empty defaults if not available
-                    query_gene = match['query_metadata'].get('gene', '') if match['query_metadata'] else ''
-                    target_gene = match['target_metadata'].get('gene', '') if match['target_metadata'] else ''
-                    
-                    # Extract family values and ensure they're integers if present
-                    query_family = match['query_metadata'].get('family', '') if match['query_metadata'] else ''
-                    if query_family and str(query_family).strip() and query_family != '':
-                        try:
-                            query_family = int(float(query_family))
-                        except (ValueError, TypeError):
-                            pass
-                            
-                    target_family = match['target_metadata'].get('family', '') if match['target_metadata'] else ''
-                    if target_family and str(target_family).strip() and target_family != '':
-                        try:
-                            target_family = int(float(target_family))
-                        except (ValueError, TypeError):
-                            pass
-                    
-                    query_splice_site = match['query_metadata'].get('splice_site', '') if match['query_metadata'] else ''
-                    target_splice_site = match['target_metadata'].get('splice_site', '') if match['target_metadata'] else ''
-                    query_introner_id = match['query_metadata'].get('introner_id', '') if match['query_metadata'] else ''
-                    target_introner_id = match['target_metadata'].get('introner_id', '') if match['target_metadata'] else ''
-                    match_score = match.get('match_score', 0)
-                    
-                    # Format start and end values as integers
-                    query_start = match['query_start']
-                    query_end = match['query_end']
-                    target_start = match['target_start']
-                    target_end = match['target_end']
-                    
-                    # Ensure start is always smaller than end for both query and target
-                    if query_start is not None and query_end is not None and query_start > query_end:
-                        query_start, query_end = query_end, query_start
+    # Collect all rows in a list for DataFrame creation
+    all_rows = []
+    
+    for query in ortholog_dict:
+        for target in ortholog_dict[query]:
+            for query_id, match in ortholog_dict[query][target].items():
+                # Extract metadata fields with empty defaults if not available
+                query_gene = match['query_metadata'].get('gene', '') if match['query_metadata'] else ''
+                target_gene = match['target_metadata'].get('gene', '') if match['target_metadata'] else ''
+                
+                # Extract family values and ensure they're integers if present
+                query_family = match['query_metadata'].get('family', '') if match['query_metadata'] else ''
+                if query_family and str(query_family).strip() and query_family != '':
+                    try:
+                        query_family = int(float(query_family))
+                    except (ValueError, TypeError):
+                        query_family = ''
                         
-                    if target_start is not None and target_end is not None and target_start > target_end:
-                        target_start, target_end = target_end, target_start
+                target_family = match['target_metadata'].get('family', '') if match['target_metadata'] else ''
+                if target_family and str(target_family).strip() and target_family != '':
+                    try:
+                        target_family = int(float(target_family))
+                    except (ValueError, TypeError):
+                        target_family = ''
+                
+                query_splice_site = match['query_metadata'].get('splice_site', '') if match['query_metadata'] else ''
+                target_splice_site = match['target_metadata'].get('splice_site', '') if match['target_metadata'] else ''
+                query_introner_id = match['query_metadata'].get('introner_id', '') if match['query_metadata'] else ''
+                target_introner_id = match['target_metadata'].get('introner_id', '') if match['target_metadata'] else ''
+                match_score = match.get('match_score', 0)
+                
+                # Extract orientation information
+                orientation = match.get('orientation', 'unknown')
+                left_reverse = match.get('left_reverse', None)
+                right_reverse = match.get('right_reverse', None)
+                
+                # Convert boolean values to strings for output
+                left_reverse_str = str(left_reverse) if left_reverse is not None else ''
+                right_reverse_str = str(right_reverse) if right_reverse is not None else ''
+                
+                # Format start and end values as integers
+                query_start = match['query_start']
+                query_end = match['query_end']
+                target_start = match['target_start']
+                target_end = match['target_end']
+                
+                # Ensure start is always smaller than end for both query and target
+                if query_start is not None and query_end is not None and query_start > query_end:
+                    query_start, query_end = query_end, query_start
                     
-                    # Convert numeric values to integer format for output
-                    query_start_str = str(int(query_start)) if query_start is not None else ''
-                    query_end_str = str(int(query_end)) if query_end is not None else ''
-                    target_start_str = str(int(target_start)) if target_start is not None else ''
-                    target_end_str = str(int(target_end)) if target_end is not None else ''
-                    
-                    outfile.write(f"{query}\t{target}\t{query_id}\t{match['scenario']}\t{match['query_contig'] or ''}\t"
-                                  f"{query_start_str}\t{query_end_str}\t{match['target_contig'] or ''}\t"
-                                  f"{target_start_str}\t{target_end_str}\t{query_gene}\t{target_gene}\t"
-                                  f"{query_family}\t{target_family}\t{query_splice_site}\t{target_splice_site}\t"
-                                  f"{query_introner_id}\t{target_introner_id}\t{match_score}\n")
-                    rows_written += 1
+                if target_start is not None and target_end is not None and target_start > target_end:
+                    target_start, target_end = target_end, target_start
+                
+                # Convert numeric values to integer format for output, preserving None as empty string
+                query_start_formatted = int(query_start) if query_start is not None else ''
+                query_end_formatted = int(query_end) if query_end is not None else ''
+                target_start_formatted = int(target_start) if target_start is not None else ''
+                target_end_formatted = int(target_end) if target_end is not None else ''
+                
+                # Build row dictionary with explicit defaults for all columns
+                row = {
+                    'query': query,
+                    'target': target,
+                    'query_id': query_id,
+                    'scenario': match['scenario'],
+                    'query_contig': match['query_contig'] or '',
+                    'query_start': query_start_formatted,
+                    'query_end': query_end_formatted,
+                    'target_contig': match['target_contig'] or '',
+                    'target_start': target_start_formatted,
+                    'target_end': target_end_formatted,
+                    'query_gene': query_gene,
+                    'target_gene': target_gene,
+                    'query_family': query_family,
+                    'target_family': target_family,
+                    'query_splice_site': query_splice_site,
+                    'target_splice_site': target_splice_site,
+                    'query_introner_id': query_introner_id,
+                    'target_introner_id': target_introner_id,
+                    'match_score': match_score,
+                    'orientation': orientation,
+                    'left_reverse': left_reverse_str,
+                    'right_reverse': right_reverse_str
+                }
+                all_rows.append(row)
+    
+    # Create DataFrame and write to TSV
+    output_df = pd.DataFrame(all_rows)
+    output_df.to_csv(sys.argv[2], sep='\t', index=False)
+    rows_written = len(all_rows)
     
     print(f"Total rows written to output file: {rows_written}")
     print("Done! Results written to ortholog_results.tsv")

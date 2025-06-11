@@ -39,7 +39,8 @@ def load_input_files(bed_file, depth_file, call_file):
             # No header, read as usual
             bed_df = pd.read_csv(bed_file, sep="\t", header=None, 
                                 names=["chrom", "start", "end", "sample", "ortholog_id",
-                                       "sequence_id", "family", "gene", "splice_site", "presence"])
+                                       "sequence_id", "family", "gene", "splice_site", "presence", "orientation",
+                                       "left_reverse", "right_reverse"])
     
     return bed_df, depth_df, gt_matrix_df
 
@@ -296,7 +297,7 @@ def main():
     
     with open(output_bed_file, 'w') as o:
         # Write header
-        header = "contig\tstart\tend\tsample\tortholog_id\tsequence_id\tfamily\tgene\tsplice_site\tleft_mean_depth\tmean_middle_depth\tright_mean_depth\tcall\tnew_call\n"
+        header = "contig\tstart\tend\tsample\tortholog_id\tsequence_id\tfamily\tgene\tsplice_site\torientation\tleft_reverse\tright_reverse\tleft_mean_depth\tmean_middle_depth\tright_mean_depth\tcall\tnew_call\n"
         o.write(header)
         
         # Process each locus
@@ -318,6 +319,7 @@ def main():
             # Write output
             data_row = f"{row['contig']}\t{row['start']}\t{row['end']}\t{row['sample']}\t{row['ortholog_id']}" \
                      + f"\t{row['sequence_id']}\t{row['family']}\t{row['gene']}\t{row['splice_site']}" \
+                     + f"\t{row['orientation']}\t{row['left_reverse']}\t{row['right_reverse']}" \
                      + f"\t{left_mean_depth}\t{mean_middle_depth}\t{right_mean_depth}\t{call}\t{new_call}\n"
             o.write(data_row)
             
